@@ -1,0 +1,390 @@
+task.wait(1.5)
+
+local players = game:GetService("Players")
+local player = players.LocalPlayer
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local userInputService = game:GetService("UserInputService")
+local mouse = player:GetMouse()
+
+local functions = replicatedStorage:WaitForChild("Functions")
+local getDataFunc = functions:WaitForChild("getDataFunc")
+local interactItemFunc = functions:WaitForChild("interactItemFunc")
+local upgradePerkFunc = functions:WaitForChild("upgradePerkFunc")
+local events = replicatedStorage:WaitForChild("Events")
+local shopUpdateEvent = events:WaitForChild("ShopUpdateEvent")
+
+local perks = require(replicatedStorage.Modules:WaitForChild("Perks"))
+
+local debounce = false
+local debounce2 = false
+local selectedPerk = nil
+local upgradeConn = nil
+
+local playerData = getDataFunc:InvokeServer(player)
+if not playerData then
+	local attemps = 0
+	repeat
+		task.wait(1)
+		attemps += 1
+		playerData = getDataFunc:InvokeServer(player)
+		print("Ran again before perks could inizialize")
+	until playerData or attemps > 3
+end
+
+local gui = player:WaitForChild("PlayerGui"):WaitForChild("MainMenu")
+local shopGui = gui:WaitForChild("ShopFrame")
+local perksFrame = gui:WaitForChild("PerksFrame")
+local perksCanva = perksFrame:WaitForChild("Perks")
+local scrollingFrame = perksCanva:WaitForChild("ScrollingFrame")
+local templateButton = scrollingFrame:FindFirstChild("Template")
+local perksButton = gui:WaitForChild("MainFrame"):WaitForChild("Allbuttons"):WaitForChild("Perks")
+local errorTitle = shopGui:WaitForChild("ErrorMessage")
+
+local perkUpgradeFrame = gui:WaitForChild("PerkUpgrades")
+local statsFrame = perkUpgradeFrame:WaitForChild("statsFrame")
+local addButton = perkUpgradeFrame:WaitForChild("addButton")
+local upgradeButton = perkUpgradeFrame:WaitForChild("upgradeButton")
+local upgradeErrorTitle = perkUpgradeFrame:WaitForChild("ErrorTitle")
+
+local Cooldown, CooldownValue = statsFrame:WaitForChild("Cooldown"), statsFrame:WaitForChild("CooldownValue")
+local Damage, DamageValue = statsFrame:WaitForChild("Damage"), statsFrame:WaitForChild("DamageValue")
+local Stat, StatValue = statsFrame:WaitForChild("Stat"), statsFrame:WaitForChild("StatValue")
+local Name, NameValue = statsFrame:WaitForChild("Name"), statsFrame:WaitForChild("NameValue")
+
+local bought = nil
+
+local function getRarity(perkName)
+	local perk = perks[perkName]
+	
+	
+	if perk.Chance < 10 then
+		--print("Mythical")
+		return "Mythical"
+	elseif perk.Chance < 100 and perk.Chance > 10 then
+		--print("Legendary")
+		return "Legendary"
+	elseif perk.Chance < 350 and perk.Chance > 100 then
+		--print("Epic")
+		return "Epic"
+	elseif perk.Chance < 700 and perk.Chance > 350 then
+		--print("Rare")
+		return "Rare"
+	else
+		return "Common"
+	end
+end
+local function getRarityColor(rarity)
+	if rarity == "Common" then
+		return Color3.new(0.780392, 0.780392, 0.780392)
+	elseif rarity == "Rare" then
+		return Color3.new(0, 0.545098, 1)
+	elseif rarity == "Epic" then
+		return Color3.new(0.690196, 0, 1)
+	elseif rarity == "Legendary" then
+		return Color3.new(1, 1, 0)
+	else
+		return Color3.new(1,0,0)
+	end
+end
+local function getRarityStroke(rarity)
+	if rarity == "Common" then
+		return Color3.new(0.368627, 0.368627, 0.368627)
+	elseif rarity == "Rare" then
+		return Color3.new(0, 0.219608, 0.4)
+	elseif rarity == "Epic" then
+		return Color3.new(0.309804, 0, 0.45098)
+	elseif rarity == "Legendary" then
+		return Color3.new(0.439216, 0.439216, 0)
+	else
+		return Color3.new(0.392157, 0, 0)
+	end
+end
+
+local function interactPerk(perkName, isShop)
+	local data, bought = interactItemFunc:InvokeServer(perkName, isShop)
+	if data then
+		playerData = data
+		updatePerkInv()
+	end
+	if isShop then 
+		local status = getItemStatus(perkName)
+		if bought == false and status == "For Sale" then
+			errorTitle.Text = "Not enough Mutant Tokens to buy " .. perkName .. "!"
+			errorTitle.TextColor3 = Color3.fromRGB(255, 0, 0)
+			errorTitle.UIStroke.Color = Color3.fromRGB(100, 0, 0)
+		elseif bought == true then
+			errorTitle.Text = perkName .. " bought successfully!"
+			errorTitle.TextColor3 = Color3.fromRGB(0, 255, 0)
+			errorTitle.UIStroke.Color = Color3.fromRGB(0, 65, 0)
+		elseif status == "Equipped" or status == "Owned" then
+			errorTitle.Text = "Perk already owned/equipped!"
+			errorTitle.TextColor3 = Color3.fromRGB(0, 255, 255)
+			errorTitle.UIStroke.Color = Color3.fromRGB(0, 130, 130)
+		else
+			errorTitle.Text = "An unknown error has occurred."
+			errorTitle.TextColor3 = Color3.fromRGB(255, 255, 0)
+			errorTitle.UIStroke.Color = Color3.fromRGB(130, 130, 0)
+		end
+
+		errorTitle.Visible = true
+		task.delay(2.5, function()
+			errorTitle.Visible = false
+		end)
+	end
+end
+
+
+function getItemStatus(itemName)
+	if playerData.EquippedPerks[itemName] then
+		return "Equipped"
+	elseif playerData.OwnedPerks[itemName] then
+		return "Owned"
+	else
+		return "For Sale"
+	end
+end
+
+local function createButton(perk, isShop, isUpgrading, parent)
+	local perkInfo = perks[perk.Name]
+	local newButton = templateButton:Clone()
+	local info = newButton:FindFirstChild("Info")
+	newButton.Name = perkInfo.Name
+	newButton.Parent = parent
+	newButton.Transparency = 0
+	info.Title.Text = perkInfo.Name
+	info.Level.Text = "Level: " .. perk.Level
+	local levelInfo = perkInfo.Levels[perk.Level]
+	if levelInfo and levelInfo.Description then
+		info.Description.Text = levelInfo.Description
+	else
+		info.Description.Text = "An unknown error has occured."
+	end
+	info.Rarity.Text = getRarity(perkInfo.Name)
+	info.Rarity.TextColor3 = getRarityColor(getRarity(perkInfo.Name))
+	info.Rarity.UIStroke.Color = getRarityStroke(getRarity(perkInfo.Name))
+	info.Visible = false
+	newButton.Visible = true
+	
+	
+	local status = getItemStatus(perk.Name)
+	if status == "Equipped" then
+		newButton.status.Visible = true
+	elseif status == "Owned" then
+		newButton.status.Visible = false
+	end
+
+	if isShop == true then
+		newButton.status.Visible = false
+	end
+
+	newButton.MouseEnter:Connect(function() --hovering
+		newButton.Info.Visible = true
+	end)
+	newButton.MouseLeave:Connect(function() --leave hovering
+		newButton.Info.Visible = false
+	end)
+	if not isUpgrading then
+		newButton.Activated:Connect(function() 
+		interactPerk(perk.Name, false)
+		end)
+	elseif isUpgrading then
+		newButton.Activated:Connect(function() --upgrade
+			selectedPerk = perks[newButton.Name]
+			--print(selectedPerk)
+		end)
+	end
+end
+
+local function setStatsUi(perkGiven)
+	local currentLevel = playerData.OwnedPerks[perkGiven.Name].Level
+	local levelData = perkGiven.Levels[currentLevel]
+	
+	if not levelData or not levelData.Effects or not levelData.Effects[1] then
+		upgradeErrorTitle.Text = "Invalid level data."
+		upgradeErrorTitle.Visible = true
+		task.delay(1.5, function()
+			upgradeErrorTitle.Visible = false
+		end)
+		return false
+	end
+
+	local effects = levelData.Effects
+	local effect = effects[1].Stat
+	local currentMult = effects[1].Multiplier
+
+	local nextLevel = currentLevel + 1
+	local nextLevelData = perkGiven.Levels[nextLevel]
+
+	if not nextLevelData then
+		upgradeErrorTitle.Visible = true
+		task.delay(1.5, function()
+			upgradeErrorTitle.Visible = false
+		end)
+		return false
+	end
+	local nextMult = nextLevelData.Effects[1].Multiplier
+	local upgradeSuccess = nil
+	
+	Stat.Visible = true
+	StatValue.Visible = true
+	Stat.Text = effect
+	StatValue.Text = currentMult .. " --> " .. nextMult
+	addButton.Image = "rbxassetid://9000071848"
+	
+	if upgradeConn then
+		upgradeConn:Disconnect()
+	end
+	
+	upgradeButton.Visible = true
+	upgradeConn = upgradeButton.Activated:Connect(function()
+		upgradeSuccess, playerData, effects = upgradePerkFunc:InvokeServer(perkGiven.Name)
+		if upgradeSuccess then
+			
+			currentLevel = playerData.OwnedPerks[perkGiven.Name].Level
+			effect = effects[1].Stat
+			currentMult = effects[1].Multiplier
+
+			nextLevel = currentLevel + 1
+			nextLevelData = perkGiven.Levels[nextLevel]
+			print(nextLevel, nextLevelData, currentLevel)
+
+			if not nextLevelData then
+				upgradeButton.Visible = false
+				upgradeErrorTitle.Visible = true
+				task.delay(1.5, function()
+					upgradeErrorTitle.Visible = false
+				end)
+				return false
+			end
+			nextMult = nextLevelData.Effects[1].Multiplier
+			StatValue.Text = currentMult .. " --> " .. nextMult
+		else
+			local originalText = upgradeErrorTitle.Text
+			upgradeErrorTitle.Text = "Not enough money to upgrade" .. perkGiven.Name .. "!"
+			upgradeErrorTitle.Visible = true
+			task.delay(1.5, function()
+				upgradeErrorTitle.Visible = false
+				upgradeErrorTitle.Text = originalText
+			end)
+		end
+	end)
+end
+
+function updatePerkInv()
+	if debounce then return end
+	debounce = true
+	
+	for _, old in scrollingFrame:GetChildren() do
+		if old:IsA("ImageButton") and old.Name ~= "Template" then
+			old:Destroy()
+		end
+	end
+	
+	for i, perk in playerData.OwnedPerks do 
+		if not perk or not perk.Name or not perk.Level then
+			local attemps = 0
+			local success = nil
+			repeat
+				task.wait(.8)
+				attemps += 1
+				if perk and perk.Name and perk.Level then success = true break end
+			until success or attemps >= 3
+			
+			if success then
+				createButton(perk, false, false, scrollingFrame)
+			else
+				print("No perks!")
+			end
+		else
+			createButton(perk, false, false, scrollingFrame)
+		end
+	end
+	
+	debounce = false
+end
+
+shopUpdateEvent.OnClientEvent:Connect(function(Perks)
+--	print("Current perks: ", Perks.Perks)
+	for i, perk in Perks.Perks do
+		local newButton = templateButton:Clone()
+		local info = newButton:FindFirstChild("Info")
+		newButton.Name = perk
+		newButton.Parent = shopGui:WaitForChild("ScrollingFrame"):WaitForChild("PerksShopFrame")
+		info.Visible = false
+		info.Title.Text = perk
+		info.Level.Text = "Level: 1"
+		info.Description.Text = perks[perk].Levels[1].Description
+		info.Rarity.Text = getRarity(perk)
+		info.Rarity.TextColor3 = getRarityColor(getRarity(perk))
+		info.Rarity.UIStroke.Color = getRarityStroke(getRarity(perk))
+		newButton.Visible = true
+
+		newButton.status.Visible = false
+			
+		newButton.MouseEnter:Connect(function() --hovering
+			newButton.Info.Visible = true
+		end)
+		newButton.MouseLeave:Connect(function() --leave hovering
+			newButton.Info.Visible = false
+		end)
+		
+		newButton.Activated:Connect(function()
+			interactPerk(perk, true)
+		end)
+	end
+end)
+
+addButton.Activated:Connect(function()
+	if debounce2 then return end
+	debounce2 = true
+
+	local newPerksFrame = perksFrame:Clone()
+	local newScrollFrame = newPerksFrame.Perks.ScrollingFrame
+	newPerksFrame.Name = "selectPerks"
+	newPerksFrame.Parent = gui
+	newPerksFrame.Visible = true
+	perksFrame.Visible = false
+	perkUpgradeFrame.Visible = false
+
+	selectedPerk = nil
+
+	for _, old in newScrollFrame:GetChildren() do
+		if old:IsA("ImageButton") and old.Name ~= "Template" then
+			old:Destroy()
+		end
+	end
+
+	newPerksFrame.Perks.ExitButton.Activated:Connect(function()
+		newPerksFrame:Destroy()
+		perkUpgradeFrame.Visible = true
+		selectedPerk = nil
+		debounce2 = false
+	end)
+
+	for _, perk in playerData.OwnedPerks do
+		if perk and perk.Name and perk.Level then
+			createButton(perk, false, true, newScrollFrame)
+		end
+	end
+	
+	local waitTime = 0
+	task.spawn(function()
+		while not selectedPerk do task.wait(0.3) waitTime += 0.3 end
+		
+		if selectedPerk then
+			setStatsUi(selectedPerk)
+			newPerksFrame:Destroy()
+			perkUpgradeFrame.Visible = true
+		else
+			print("No perk selected")
+			newPerksFrame:Destroy()
+			perkUpgradeFrame.Visible = true
+		end
+
+		debounce2 = false
+	end)
+end)
+
+perksButton.Activated:Connect(updatePerkInv)
+
+--also time consuming to make maybe a few days
