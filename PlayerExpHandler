@@ -1,0 +1,61 @@
+local userInputService = game:GetService("UserInputService")
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local players = game:GetService("Players")
+local player = players.LocalPlayer
+
+local functions = replicatedStorage:WaitForChild("Functions")
+local getExpFunc = functions:WaitForChild("getExpFunc")
+local updateExpFunc = functions:WaitForChild("updateExp")
+local removeExpFunc = functions:WaitForChild("removeExp")
+
+local events = replicatedStorage:WaitForChild("Events")
+local updateExpEvent = events:WaitForChild("updateExp")
+
+local gui = script.Parent
+local levelText = gui.LevelText
+local expText = gui.ExpText
+
+local requiredExp, level, exp = updateExpFunc:InvokeServer(player)
+if not requiredExp or not level or not exp then
+	local attemps = 0
+	local success = nil
+	
+	repeat
+		task.wait(0.5)
+		requiredExp, level, exp = updateExpFunc:InvokeServer(player)
+	until success or attemps > 4
+end
+
+local function addExp(amount)
+	updateExpEvent:FireServer(amount)
+	requiredExp, level, exp = updateExpFunc:InvokeServer()
+	toggle()
+end
+
+local function removeExp()
+	updateExpEvent:FireServer()
+	requiredExp, level, exp = removeExpFunc:InvokeServer()
+	toggle()
+end
+
+local function updateExpGui()
+	levelText.Text = "Lvl " .. level
+	expText.Text = exp .. "/" .. requiredExp
+end
+
+function toggle()
+	updateExpGui()
+end
+toggle()
+
+userInputService.InputBegan:Connect(function(input, proccessed)
+	if not proccessed and input.KeyCode == Enum.KeyCode.E then
+		addExp(100)
+	end
+end)
+
+userInputService.InputBegan:Connect(function(input, proccessed)
+	if not proccessed and input.KeyCode == Enum.KeyCode.R then
+		removeExp()
+	end
+end)
