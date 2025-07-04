@@ -1,0 +1,189 @@
+local DataStoreService = game:GetService("DataStoreService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local shopDataStore = DataStoreService:GetDataStore("GlobalShopData")
+local leaderKey = "ShopResetLeader"
+local myJobId = game.JobId
+local leaderExpireTime = 900
+
+local ShopUpdateEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("ShopUpdateEvent")
+
+local allPerks = require(ReplicatedStorage.Modules.Perks)
+
+local totalChance = 0
+
+for _, perk in pairs(allPerks) do
+	if typeof(perk) == "table" and typeof(perk.Chance) == "number" then
+		totalChance += perk.Chance
+	end
+end
+
+local shopPerks = {}
+
+local function getRandomPerks()
+	local perks = {}
+	local copy = {}
+
+	-- Make a copy of allPerks
+	for _, v in allPerks do
+		if typeof(v) == "table" and typeof(v.Chance) == "number" and typeof(v.Name) == "string" and v["ForSale"] == true then
+			table.insert(copy, v)
+		end
+	end
+
+	for i = 1, 4 do
+		if #copy == 0 then break end
+
+		local currentTotalChance = 0
+		for _, perk in copy do
+			currentTotalChance += perk.Chance
+		end
+
+		local roll = math.random(1, currentTotalChance)
+		local cumulative = 0
+
+		for index, perk in copy do
+			cumulative += perk.Chance
+
+			--print("Roll:", roll, " Cumulative:", cumulative, " Perk:", perk.Name, perk.Chance) debugging
+
+			if roll <= cumulative then
+				--print("----------------------------------------------")
+				--print(perk.Name)
+				--print("----------------------------------------------")
+				table.insert(perks, perk.Name)
+				table.remove(copy, index) -- Remove selected perk to avoid duplicates
+				break
+			end
+		end
+	end
+
+	--print("Selected perks for the next hour:", perks)
+	return perks
+end
+
+local function saveShop(perks)
+	local shopData = {
+		ResetTime = os.time() + 3600,
+		Perks = perks
+	}
+
+	local success, err = pcall(function()
+		shopDataStore:SetAsync("CurrentShop", shopData)
+	end)
+
+	if not success then
+		warn("Failed to save shop:", err)
+	end
+
+	return shopData
+end
+
+local function loadShop()
+	local success, shopData = pcall(function()
+		return shopDataStore:GetAsync("CurrentShop")
+	end)
+
+	if not success then
+		warn("Error loading shop data:", shopData)
+		return nil
+	end
+
+	-- No data or expired
+	if not shopData or not shopData.ResetTime or os.time() >= shopData.ResetTime then
+		--print("Shop expired or not found. Generating new perks.")
+		local newPerks = getRandomPerks()
+		return saveShop(newPerks)
+	end
+
+	print("Shop loaded from DataStore:", shopData)
+	return shopData
+end
+
+local function claimLeadership()
+	local success, currentLeader = pcall(function()
+		return shopDataStore:GetAsync(leaderKey)
+	end)
+
+	if not success then
+		warn("Failed to get leader info")
+		return false
+	end
+
+	if not currentLeader then
+		local claimSuccess = pcall(function()
+			shopDataStore:SetAsync(leaderKey, {
+				JobId = myJobId,
+				Timestamp = os.time()
+			})
+		end)
+
+		print("This server claimed leadership.")
+		return true
+	else
+		if currentLeader == myJobId then
+			return true
+		else
+			print("Another server is the leader.")
+			return false
+		end
+	end
+end
+
+local isLeader = claimLeadership() --check if this server is the leader
+local shopPerks = loadShop() --get shop perks
+
+if isLeader then
+	ShopUpdateEvent:FireAllClients(shopPerks) --if the server is the leader then tell all clients to update shop ui
+end
+
+task.spawn(function()
+	while true do
+		local now = os.time() --get the current time
+
+		local success, currentLeaderData = pcall(function()
+			return shopDataStore:GetAsync(leaderKey) --try to see if they are any leaders
+		end)
+
+		local shouldClaim = false
+
+		if not success or not currentLeaderData then
+			print("No valid leader found. Trying to claim...")
+			shouldClaim = true
+			
+		elseif currentLeaderData.JobId == myJobId then
+			shouldClaim = true
+			
+		elseif currentLeaderData.Timestamp and (now - currentLeaderData.Timestamp) > leaderExpireTime then --if 15mins have passed then this servers tries to be the new leader
+			print("Leader expired. Claiming new leadership.")
+			shouldClaim = true
+			
+		end
+
+		if shouldClaim then
+			local newLeaderData = {
+				JobId = myJobId, --which server got leader and chose perks
+				Timestamp = os.time() --at what time
+			} --the data used for all the running servers
+
+			local setSuccess = pcall(function()
+				shopDataStore:SetAsync(leaderKey, newLeaderData) --set the data before another leader takes the place
+			end)
+
+			if setSuccess then --if it worked
+				print("This server became the leader.")
+				local shopData = loadShop() --get the shop data
+
+				if os.time() >= shopData.ResetTime then --if one hour has passed get new perks
+					local newPerks = getRandomPerks() --get new perks
+					local updatedShop = saveShop(newPerks) --get a new shop
+					ShopUpdateEvent:FireAllClients(updatedShop) --update all the clients for the new perks
+				end
+			end
+		end
+
+		task.wait(60)
+	end
+end)
+
+--my most time consuming script yet
