@@ -1,0 +1,356 @@
+local players = game:GetService("Players")
+local dataStoreService = game:GetService("DataStoreService")
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local runService = game:GetService("RunService")
+
+local getDataFunc = replicatedStorage:WaitForChild("Functions"):WaitForChild("getDataFunc")
+local getExpFunc = replicatedStorage:WaitForChild("Functions"):WaitForChild("getExpFunc")
+local interactItemFunc = replicatedStorage:WaitForChild("Functions"):WaitForChild("interactItemFunc")
+
+local bindables = replicatedStorage:WaitForChild("Bindables")
+local getPerksBind = bindables:WaitForChild("getPerksData")
+
+local perks = require(replicatedStorage:WaitForChild("Modules"):WaitForChild("Perks"))
+
+local database = dataStoreService:GetDataStore("TestV1")-- and this is the data base that stores ALL of the players data
+local databaseExp = dataStoreService:GetDataStore("expStore")-- and this is the data base that stores ALL of the players exp level and all
+local redeemedStore = dataStoreService:GetDataStore("RedeemedCodes") -- stores redeemed codes
+local databasePerks = dataStoreService:GetDataStore("OwnedPerks")
+
+local data = {} -- this is the table that saves all of the data of the players in the server
+local dataExp = {} --same but exp
+local dataPerks = {}
+local addedExp = {}
+
+local codes = require(replicatedStorage.Modules:WaitForChild("codesModule"))
+
+--load the data for a player
+local function loadData(player)
+	local success = nil
+	local playerData = nil
+	local attempt = 1
+
+	repeat
+		success, playerData = pcall(function()
+			return database:GetAsync(player.UserId)
+		end)
+
+		attempt += 1
+		if not success then
+			warn(playerData)
+			task.wait()
+		end
+
+	until success or attempt == 3
+
+	if success then --if it didnt error proceed
+		if playerData then -- if there was data proceed
+			data[player.UserId] = playerData
+			print("Data loaded for", player.Name, data[player.UserId])
+			
+		else -- if there wasnt data then give the player the default one
+			print("New player, setting default data for", player.Name)
+		data[player.UserId] = {
+			["MutantTokens"] = 0,
+			["QTokens"] = 0,
+			["OwnedPerks"] = {},
+			["EquippedPerks"] = {}
+		}
+		end
+	else -- if it did error then kick the player to prevent saving data that isnt his and accidently erasing his old data Bloodlusted
+		player:Kick("There was an error getting your data, contact us if this persists.")
+		data[player.UserId] = nil
+		warn("Failed to load data for", player.Name, playerData)
+	end
+end
+local function LoadDataExp(player)
+	local success = nil
+	local playerData = nil
+	local attempt = 1
+
+	repeat
+		success, playerData = pcall(function()
+			return databaseExp:GetAsync(player.UserId)
+		end)
+
+		attempt += 1
+		if not success then
+			warn(playerData)
+			task.wait()
+		end
+
+	until success or attempt == 3
+
+	if success then
+		print("Exp loaded for ",player.Name, playerData)
+		if not playerData then
+			print("New player, giving default data")
+			playerData = {
+				["Exp"] = 0,
+				["RequiredExp"] = 250,
+				["Level"] = 0
+			}
+			print(playerData)
+		end
+		dataExp[player.UserId] = playerData
+	else
+		warn("Unable to get data for player", player.UserId)
+		player:Kick("There was a problem getting your data")
+	end
+end
+
+players.PlayerAdded:Connect(function(player)
+	task.spawn(function()
+		loadData(player)
+		LoadDataExp(player)
+	end)
+end) -- when a player joins, load the data
+
+local function saveData(player)
+	if not data[player.UserId] then return end -- if there isnt any data then dont save to prevent overwriting issues
+	local success = nil
+	local playerData = nil
+	local attempt = 1
+
+	repeat
+		success, playerData = pcall(function()
+			return database:UpdateAsync(player.UserId, function()
+				return data[player.UserId]
+			end)
+		end)
+
+		attempt += 1
+		if not success then
+			warn(playerData)
+			task.wait()
+		end
+
+	until success or attempt == 3
+	
+	if success then
+		print("Data saved for", player.Name, data[player.UserId])
+		data[player.UserId] = nil
+	else
+		warn("Failed to save data for", player.Name, playerData)
+	end
+end
+local function SaveDataExp(player)
+	if dataExp[player.UserId] then
+		local success = nil
+		local playerData = nil
+		local attempt = 1
+
+		repeat
+			success, playerData = pcall(function()
+				return databaseExp:UpdateAsync(player.UserId, function()
+					return dataExp[player.UserId]
+				end)
+			end)
+
+			attempt += 1
+			if not success then
+				warn(playerData)
+				task.wait()
+			end
+
+		until success or attempt == 3
+
+		if success then
+			print("Data exp saved successfully ", playerData)
+		else
+			warn("Unable to save data for", player.UserId)
+		end
+	else
+		warn("No session data for", player.UserId)
+	end
+
+end
+players.PlayerRemoving:Connect(function(player)
+	task.spawn(function()
+		saveData(player)
+		SaveDataExp(player)
+		data[player.UserId] = nil
+		dataExp[player.UserId] = nil
+		dataPerks[player.UserId] = nil 
+	end)
+end) -- when player leaves save his data
+
+game:BindToClose(function() -- if servers shut down for e.g: an update, save all datas
+	if not runService:IsStudio() then
+		print("Shutting down, saving all data")
+		for _, player in pairs(players:GetPlayers()) do
+			task.spawn(function()
+				saveData(player)
+				SaveDataExp(player)
+			end)
+		end
+	end
+end)
+--for testing purposes
+replicatedStorage.Events.resetCodes.OnServerEvent:Connect(function(player)
+	for code, _ in code) do --get every code in the module
+		local key = player.UserId .. "_" .. code
+		pcall(function()
+			redeemedStore:RemoveAsync(key) --and remove it from the player's database
+		end)
+	end
+end)
+
+
+function redeemCode(player, code)
+	local playerData = data[player.UserId]
+	local codeData = codes[code] --get the all the code's info from the module script responsible for hosting it
+	local key = player.UserId .. "_" .. code 
+
+	if not codeData then return false, "Code is invalid!" end --if the code is invalid return to prevent anything
+
+	if codeData.Expire and (os.time() > codeData.Expire) then return false, "Code has expired!" end --if the code has expired then return
+
+	local success, result = pcall(function()
+		return redeemedStore:UpdateAsync(key, function(prev) --get if the code has already been redeemed
+			if prev then return nil end
+			return true
+		end)
+	end)
+
+	if not success or result ~= true then return false, "Code already redeemed!" end --tell that to the client for it to show that on screen
+
+	playerData.MutantTokens += codeData.MutantTokens --add the amount of currency to the player
+	print(playerData.MutantTokens)
+	return true, "Code redeemed successfully!", codeData.MutantTokens --tell the client it was successfull
+
+end
+
+--when the client asks to redeem a code link that to the function
+replicatedStorage.Functions.redeemCode.OnServerInvoke = function(player, code)
+	return redeemCode(player, code)
+end
+
+replicatedStorage.Events.updateExp.OnServerEvent:Connect(function(player, amount)
+	addedExp[player.UserId] = amount
+end)
+
+--update exp and add some if specified
+replicatedStorage.Functions.updateExp.OnServerInvoke = function(player)
+	local playerData = dataExp[player.UserId]
+	if not playerData then
+		print("ran before exp inizialized")
+		task.wait(2.5)
+		playerData = dataExp[player.UserId]
+	end
+
+	if playerData.Exp and playerData.RequiredExp and playerData.Level then
+		--print(playerData.Exp)
+		playerData.Exp += addedExp[player.UserId] or 0
+		addedExp[player.UserId] = nil
+
+		while playerData.Exp >= playerData.RequiredExp do
+			playerData.Exp -= playerData.RequiredExp
+			playerData.Level += 1
+			playerData.RequiredExp = math.floor(playerData.RequiredExp * 1.15)
+			print(playerData.Level)
+		end
+		--print(playerData.Exp)
+		return playerData.RequiredExp, playerData.Level, playerData.Exp
+	else
+		warn("No exp or required exp for :", player.Name)
+	end
+end
+
+-- Resets player exp/level (testing and admin purposes)
+replicatedStorage.Functions.removeExp.OnServerInvoke = function(player)
+	local playerData = dataExp[player.UserId]
+
+	if playerData.Exp and playerData.RequiredExp then
+		playerData.Level = 0
+		playerData.Exp = 0
+		playerData.RequiredExp = 250
+		return playerData.RequiredExp, playerData.Level, playerData.Exp
+	else
+		warn("No exp or required exp for :", player.Name)
+	end
+end
+
+--get the status of the item(owned, equipped or for sale)
+local function getItemStatus(player, itemName)
+	local playerData = data[player.UserId]
+	if playerData.EquippedPerks[itemName] then
+		return "Equipped"
+	elseif playerData.OwnedPerks[itemName] then
+		return "Owned"
+	else
+		return "For Sale"
+	end
+end
+
+replicatedStorage.Functions.interactItemFunc.OnServerInvoke = function(player, perkName, isShop)
+	local perk = perks[perkName]
+	local playerData = data[player.UserId]
+	local cost = perk.Levels[1].Cost.Amount
+	local currency = perk.Levels[1].Cost.Currency
+	if playerData then
+		local status = getItemStatus(player, perkName)
+		--print(cost, currency)
+
+		if status == "For Sale" and cost <= playerData[currency] and isShop == true then
+			-- purchase the perk
+			playerData[currency] -= cost
+			print(playerData[currency])
+			print(player.Name .."is trying to buy : ",perk.Name)
+			playerData.OwnedPerks[perk.Name] = {
+				Level = 1,
+				Name = perk.Name
+			}
+		return playerData, true --bought
+		elseif status == "Owned" and isShop == false then
+			-- equip the perk
+			playerData.EquippedPerks = { [perkName] = playerData.OwnedPerks[perkName] }
+
+			return playerData, false --alr owned
+		elseif status == "Equipped" and isShop == false then
+			-- unequip the perk
+			playerData.EquippedPerks[perkName] = nil
+			return playerData, false --alr equipped
+			
+		elseif status == "For Sale" and cost >= playerData[currency] and isShop == true then
+			--perk is for sale but not enough money to buy
+			print("Not enough Mutant Tokens to buy this perk!")
+			return playerData, false --cannot buy
+		end
+
+		return playerData, false --if all of that fails does not buy
+	else
+		warn("Perk/player data does not exist")
+	end
+
+	return false
+end
+
+replicatedStorage.Functions.upgradePerkFunc.OnServerInvoke = function(player, perkName) --wip
+	local perk = perks[perkName]
+	local playerData = data[player.UserId]
+	local cost = perk.Levels[playerData.OwnedPerks[perkName].Level].Cost.Amount
+	local currency = perk.Levels[playerData.OwnedPerks[perkName].Level].Cost.Currency
+	if not playerData or not perk then return end 
+	if playerData[currency] < cost then return false, playerData end --if the player is too poor refuse upgrading
+	if playerData.OwnedPerks[perkName].Levels == 3 then return end --if the perk has reached maximum upgrade level refuse upgrading
+	
+	playerData.OwnedPerks[perkName].Level += 1
+	playerData[currency] -= cost
+	--print(playerData[currency])
+	local effects = perk.Levels[playerData.OwnedPerks[perkName].Level].Effects --get the new effects after upgrading
+	
+	return true, playerData, effects
+end
+--those three are used when both client and server want to access the player data for e.g. ui or perk upgrades/inventory
+getDataFunc.OnServerInvoke = function(player)
+	return data[player.UserId]
+end
+
+getExpFunc.OnServerInvoke = function(player)
+	return dataExp[player.UserId]
+end
+
+getPerksBind.OnInvoke = function(player)
+	return data[player.UserId]
+end
