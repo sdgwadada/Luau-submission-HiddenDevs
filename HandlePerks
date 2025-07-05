@@ -101,12 +101,12 @@ local function getRarityStroke(rarity)
 end
 
 local function interactPerk(perkName, isShop)
-	local data, bought = interactItemFunc:InvokeServer(perkName, isShop)
-	if data then
+	local data, bought = interactItemFunc:InvokeServer(perkName, isShop --tell the server that the perk's button was touched and get the results (bought/equipped)
+	if data then --if something happened then update our data
 		playerData = data
 		updatePerkInv()
 	end
-	if isShop then 
+	if isShop then --if the perk was interacted with from the shop 
 		local status = getItemStatus(perkName)
 		if bought == false and status == "For Sale" then
 			errorTitle.Text = "Not enough Mutant Tokens to buy " .. perkName .. "!"
@@ -144,9 +144,9 @@ function getItemStatus(itemName)
 	end
 end
 
-local function createButton(perk, isShop, isUpgrading, parent)
-	local perkInfo = perks[perk.Name]
-	local newButton = templateButton:Clone()
+local function createButton(perk, isShop, isUpgrading, parent) -- create a button based on the perk, if its in the shop or upgrading frame and its given parent
+	local perkInfo = perks[perk.Name] --get all the perks info from the module script
+	local newButton = templateButton:Clone() 
 	local info = newButton:FindFirstChild("Info")
 	newButton.Name = perkInfo.Name
 	newButton.Parent = parent
@@ -154,12 +154,12 @@ local function createButton(perk, isShop, isUpgrading, parent)
 	info.Title.Text = perkInfo.Name
 	info.Level.Text = "Level: " .. perk.Level
 	local levelInfo = perkInfo.Levels[perk.Level]
-	if levelInfo and levelInfo.Description then
+	if levelInfo and levelInfo.Description then --to prevent errors
 		info.Description.Text = levelInfo.Description
 	else
 		info.Description.Text = "An unknown error has occured."
 	end
-	info.Rarity.Text = getRarity(perkInfo.Name)
+	info.Rarity.Text = getRarity(perkInfo.Name) --show its rarity
 	info.Rarity.TextColor3 = getRarityColor(getRarity(perkInfo.Name))
 	info.Rarity.UIStroke.Color = getRarityStroke(getRarity(perkInfo.Name))
 	info.Visible = false
@@ -195,11 +195,11 @@ local function createButton(perk, isShop, isUpgrading, parent)
 	end
 end
 
-local function setStatsUi(perkGiven)
+local function setStatsUi(perkGiven) --show the stats and next stats if the perk isnt max level
 	local currentLevel = playerData.OwnedPerks[perkGiven.Name].Level
 	local levelData = perkGiven.Levels[currentLevel]
 	
-	if not levelData or not levelData.Effects or not levelData.Effects[1] then
+	if not levelData or not levelData.Effects or not levelData.Effects[1] then --if something goes wrong
 		upgradeErrorTitle.Text = "Invalid level data."
 		upgradeErrorTitle.Visible = true
 		task.delay(1.5, function()
@@ -231,14 +231,14 @@ local function setStatsUi(perkGiven)
 	StatValue.Text = currentMult .. " --> " .. nextMult
 	addButton.Image = "rbxassetid://9000071848"
 	
-	if upgradeConn then
+	if upgradeConn then --prevent more than one connexion
 		upgradeConn:Disconnect()
 	end
 	
 	upgradeButton.Visible = true
-	upgradeConn = upgradeButton.Activated:Connect(function()
-		upgradeSuccess, playerData, effects = upgradePerkFunc:InvokeServer(perkGiven.Name)
-		if upgradeSuccess then
+	upgradeConn = upgradeButton.Activated:Connect(function() --create a new connexion
+		upgradeSuccess, playerData, effects = upgradePerkFunc:InvokeServer(perkGiven.Name) --tell the server to upgrade the perk if its possible
+		if upgradeSuccess then --if it was a success
 			
 			currentLevel = playerData.OwnedPerks[perkGiven.Name].Level
 			effect = effects[1].Stat
@@ -258,7 +258,7 @@ local function setStatsUi(perkGiven)
 			end
 			nextMult = nextLevelData.Effects[1].Multiplier
 			StatValue.Text = currentMult .. " --> " .. nextMult
-		else
+		else -- if it isnt possible to upgrade
 			local originalText = upgradeErrorTitle.Text
 			upgradeErrorTitle.Text = "Not enough money to upgrade" .. perkGiven.Name .. "!"
 			upgradeErrorTitle.Visible = true
@@ -271,17 +271,17 @@ local function setStatsUi(perkGiven)
 end
 
 function updatePerkInv()
-	if debounce then return end
+	if debounce then return end --prevent spam
 	debounce = true
 	
-	for _, old in scrollingFrame:GetChildren() do
+	for _, old in scrollingFrame:GetChildren() do --prevent duplicates
 		if old:IsA("ImageButton") and old.Name ~= "Template" then
 			old:Destroy()
 		end
 	end
 	
-	for i, perk in playerData.OwnedPerks do 
-		if not perk or not perk.Name or not perk.Level then
+	for i, perk in playerData.OwnedPerks do --for each perk owned by the player we create a button
+		if not perk or not perk.Name or not perk.Level then --if the data hasnt loaded we wait
 			local attemps = 0
 			local success = nil
 			repeat
@@ -290,22 +290,22 @@ function updatePerkInv()
 				if perk and perk.Name and perk.Level then success = true break end
 			until success or attemps >= 3
 			
-			if success then
+			if success then --if it loaded correctly
 				createButton(perk, false, false, scrollingFrame)
-			else
+			else --either an error occured or the perk had no perks (new player?)
 				print("No perks!")
 			end
-		else
+		else --data was already loaded
 			createButton(perk, false, false, scrollingFrame)
 		end
 	end
 	
-	debounce = false
+	debounce = false --set the debounce to false so it is reusable
 end
 
-shopUpdateEvent.OnClientEvent:Connect(function(Perks)
---	print("Current perks: ", Perks.Perks)
-	for i, perk in Perks.Perks do
+shopUpdateEvent.OnClientEvent:Connect(function(Perks) --when the global shop resets
+	--print("Current perks: ", Perks.Perks)
+	for i, perk in Perks.Perks do --for each perk in the shops perks
 		local newButton = templateButton:Clone()
 		local info = newButton:FindFirstChild("Info")
 		newButton.Name = perk
@@ -335,10 +335,10 @@ shopUpdateEvent.OnClientEvent:Connect(function(Perks)
 end)
 
 addButton.Activated:Connect(function()
-	if debounce2 then return end
+	if debounce2 then return end --another debounce to prevent unwanted errors
 	debounce2 = true
 
-	local newPerksFrame = perksFrame:Clone()
+	local newPerksFrame = perksFrame:Clone() --create a new frame to store the temporary ui
 	local newScrollFrame = newPerksFrame.Perks.ScrollingFrame
 	newPerksFrame.Name = "selectPerks"
 	newPerksFrame.Parent = gui
@@ -348,28 +348,21 @@ addButton.Activated:Connect(function()
 
 	selectedPerk = nil
 
-	for _, old in newScrollFrame:GetChildren() do
-		if old:IsA("ImageButton") and old.Name ~= "Template" then
-			old:Destroy()
-		end
-	end
-
-	newPerksFrame.Perks.ExitButton.Activated:Connect(function()
+	newPerksFrame.Perks.ExitButton.Activated:Connect(function() --if the player exits the frame 
 		newPerksFrame:Destroy()
 		perkUpgradeFrame.Visible = true
 		selectedPerk = nil
 		debounce2 = false
 	end)
 
-	for _, perk in playerData.OwnedPerks do
+	for _, perk in playerData.OwnedPerks do --create a temporary inventory
 		if perk and perk.Name and perk.Level then
 			createButton(perk, false, true, newScrollFrame)
 		end
 	end
 	
-	local waitTime = 0
-	task.spawn(function()
-		while not selectedPerk do task.wait(0.3) waitTime += 0.3 end
+	task.spawn(function() --wait until a player selects a perk or exits
+		while not selectedPerk do task.wait(0.3) end
 		
 		if selectedPerk then
 			setStatsUi(selectedPerk)
@@ -385,6 +378,4 @@ addButton.Activated:Connect(function()
 	end)
 end)
 
-perksButton.Activated:Connect(updatePerkInv)
-
---also time consuming to make maybe a few days
+perksButton.Activated:Connect(updatePerkInv) --update the inventory each time it is clickek
